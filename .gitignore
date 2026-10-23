@@ -1,0 +1,5 @@
+# Datos privados del puente: PIN, IP de la TV, certificados y llaves. Nunca al repositorio.
+bridge/data/
+bridge/.venv/
+__pycache__/
+*.pyc
