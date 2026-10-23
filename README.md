@@ -56,6 +56,32 @@ código QR.
 las Android TV lo hacen para Chromecast). Si la TV se apagó por completo (desconectada de la luz), enciéndela una
 vez con su control.
 
+## Sin PC: un celular Android viejo como puente
+
+El puente tiene que estar encendido en algún aparato de la casa mientras uses el control. Un celular Android
+viejo, conectado al cargador junto a la TV, sirve: gasta poco y arranca solo.
+
+1. **En la PC** (si ya usabas el puente ahí), guarda su identidad para no reinstalar el certificado en el iPhone
+   ni volver a emparejar la TV: clic derecho en `bridge\exportar-identidad.ps1` → *Ejecutar con PowerShell*. Deja
+   `control-tv-identidad.zip` en el Escritorio; cópialo a la carpeta **Descargas** del celular (cable USB) y
+   **bórralo de la PC** (tiene llaves privadas).
+2. **En el celular** (Android 7 o más nuevo, conectado al mismo Wi-Fi), instala desde **F-Droid**
+   (https://f-droid.org) las apps **Termux** y **Termux:Boot** (no las de Play Store, están desactualizadas).
+   Abre Termux:Boot una vez.
+3. En **Termux** escribe:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/MisaelZepeda/control-tv/main/bridge/termux-instalar.sh | bash
+   ```
+
+   Instala todo (unos minutos), importa y borra el zip de Descargas, deja el puente arrancando solo al
+   encender el celular y lo arranca. Se abre en el celular la página con el **código QR**.
+4. **Escanea ese QR con el iPhone**: el control pasa a usar el celular como puente.
+5. Para que Android no lo duerma: Ajustes → Apps → Termux → Batería → **Sin restricciones**, y deja el celular
+   en el cargador. Conviene reservarle su IP en el router (DHCP → Reservación de direcciones) para que no cambie.
+
+Para volver a ver el QR después: en el navegador del celular abre `http://127.0.0.1:8080/qr`.
+
 ## Seguridad
 
 - La API del puente pide **PIN** en cada orden y bloquea una dirección un minuto tras 5 PIN incorrectos.

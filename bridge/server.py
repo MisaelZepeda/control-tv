@@ -16,7 +16,6 @@ import ipaddress
 import json
 import logging
 import os
-import pathlib
 import secrets
 import socket
 import ssl
@@ -496,22 +495,40 @@ code{{color:#fff}}</style></head><body><main>
 <div class="qr">{qr}</div>
 <p>Abre la página del certificado y del control, con la dirección y el PIN ya incluidos.<br>
 PIN: <code>{pin}</code> · Puente: <code>{bridge}</code></p>
-<p>Deja abierta la ventana negra del puente mientras uses el control.</p></main></body></html>"""
+<p>Deja el puente corriendo mientras uses el control.</p></main></body></html>"""
 
 
-def write_start_page(setup_url, bridge_url, pin):
-    """La página con el código QR que se abre en la PC al arrancar el puente (queda en bridge/data/)."""
+def start_page(setup_url, bridge_url, pin):
+    """La página con el código QR para configurar el celular (lleva el PIN, por eso solo se sirve a este equipo)."""
     import segno
     qr = segno.make(setup_url, error="m").svg_inline(scale=8, dark="#000", light="#fff")
-    path = os.path.join(DATA, "inicio.html")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(START_PAGE.format(qr=qr, pin=pin, bridge=bridge_url))
-    return path
+    return START_PAGE.format(qr=qr, pin=pin, bridge=bridge_url)
 
 
-def make_help(bridge_url):
+def open_local(url):
+    """Abre una dirección en el navegador de este equipo: en Windows el predeterminado; en Android (Termux) el del
+    celular, con termux-open-url."""
+    import shutil
+    import subprocess
+    opener = shutil.which("termux-open-url")
+    if opener:
+        subprocess.Popen([opener, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        webbrowser.open(url)
+
+
+def make_help(bridge_url, cfg):
     async def page(request):
         return web.Response(text=HELP_PAGE.format(webapp=WEBAPP, bridge=bridge_url), content_type="text/html")
+
+    async def qr(request):
+        # El código QR lleva el PIN: solo para el navegador de este mismo equipo, nunca para la red.
+        if request.remote not in ("127.0.0.1", "::1"):
+            raise web.HTTPForbidden(text="Solo desde este equipo")
+        host = bridge_url.split("//", 1)[1].rsplit(":", 1)[0]
+        setup_url = f"http://{host}:{HTTP_PORT}/#pin={cfg['pin']}"
+        return web.Response(text=start_page(setup_url, bridge_url, cfg["pin"]), content_type="text/html",
+                            headers={"Cache-Control": "no-store"})
 
     async def ca(request):
         with open(os.path.join(DATA, "ca.crt"), "rb") as f:
@@ -521,6 +538,7 @@ def make_help(bridge_url):
 
     app = web.Application()
     app.router.add_get("/", page)
+    app.router.add_get("/qr", qr)
     app.router.add_get("/control-tv-ca.crt", ca)
     return app
 
@@ -546,7 +564,7 @@ async def main(args):
         ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         ctx.load_cert_chain(cert_path, key_path)
         bridge_url = f"https://{ip}:{HTTPS_PORT}"
-        for app, port, tls in ((make_api(cfg, tv), HTTPS_PORT, ctx), (make_help(bridge_url), HTTP_PORT, None)):
+        for app, port, tls in ((make_api(cfg, tv), HTTPS_PORT, ctx), (make_help(bridge_url, cfg), HTTP_PORT, None)):
             runner = web.AppRunner(app, access_log=logging.getLogger("aiohttp.access") if args.verbose else None)
             await runner.setup()
             await web.TCPSite(runner, "0.0.0.0", port, ssl_context=tls).start()
@@ -556,14 +574,13 @@ async def main(args):
     print(f"  Webapp:       {WEBAPP}#bridge={bridge_url}")
     print(f"  PIN:          {cfg['pin']}")
     if not args.test_http_local:
-        setup_url = f"http://{ip}:{HTTP_PORT}/#pin={cfg['pin']}"
-        print(f"  Celular:      http://{ip}:{HTTP_PORT}/   (o escanea el código QR que se abrió en la PC)")
-        try:
-            page = write_start_page(setup_url, bridge_url, cfg["pin"])
-            if not args.no_browser:
-                webbrowser.open(pathlib.Path(page).as_uri())
-        except Exception:
-            log.exception("No se pudo crear la página con el código QR")
+        print(f"  Celular:      http://{ip}:{HTTP_PORT}/")
+        print(f"  Código QR:    http://127.0.0.1:{HTTP_PORT}/qr   (ábrelo en este equipo y escanéalo con el celular)")
+        if not args.no_browser:
+            try:
+                open_local(f"http://127.0.0.1:{HTTP_PORT}/qr")
+            except Exception:
+                log.exception("No se pudo abrir la página del código QR")
     print(f"  TV:           {cfg.get('tv_host') or 'se buscará en la red'}")
     print("  Ctrl+C para detener.\n", flush=True)
     try:

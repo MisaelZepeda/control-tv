@@ -1,0 +1,2 @@
+# Los scripts de Termux necesitan finales de línea de Unix.
+*.sh text eol=lf
