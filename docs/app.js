@@ -20,16 +20,18 @@
     } catch (e) { /* idem */ }
   }
 
-  // El puente abre la webapp con #bridge=https://IP:8443 para no tener que escribir la dirección.
+  // El código QR del puente abre la webapp con #bridge=https://IP:8443&pin=123456: nada que escribir. El fragmento
+  // (#…) nunca se envía a ningún servidor, y se borra de la barra de direcciones en cuanto se lee.
   function fromHash() {
-    const m = location.hash.match(/bridge=([^&]+)/);
-    if (!m) return false;
-    const url = normalize(decodeURIComponent(m[1]));
+    const bridge = location.hash.match(/bridge=([^&]+)/);
+    const pin = location.hash.match(/pin=(\d{6})(?:&|$)/);
+    if (!bridge && !pin) return false;
     history.replaceState(null, "", location.pathname + location.search);
-    if (!url) return false;
-    state.bridge = url;
+    const url = bridge ? normalize(decodeURIComponent(bridge[1])) : "";
+    if (url) state.bridge = url;
+    if (pin) state.pin = pin[1];
     save();
-    return true;
+    return !!url;
   }
 
   function normalize(value) {
@@ -114,7 +116,12 @@
   function render(s) {
     state.status = s;
     if (!s) return;
-    if (s.paired === false) {
+    const off = s.connected && s.on === false;
+    $("#powerBtn").classList.toggle("off", off);
+    $("#powerLabel").textContent = off ? "Encender" : "Apagar";
+    if (s.has_tv === false) {
+      showStatus("warn", "Falta elegir la TV", "Toca aquí para buscarla en la red");
+    } else if (s.paired === false) {
       showStatus("warn", "Falta emparejar", "Toca aquí para emparejar con la TV");
     } else if (!s.connected) {
       showStatus("warn", "TV sin conexión", "¿Está conectada al Wi-Fi?");
@@ -157,8 +164,13 @@
   async function sendKey(key) {
     try {
       await api("/api/key", { key, action: "tap" });
+      if (key === "POWER") setTimeout(refresh, 1500);      // el botón cambia a Encender/Apagar
     } catch (e) {
-      toast(e.message);
+      if (key === "POWER" && e.status === 503) {
+        toast("La TV está apagada por completo (sin red): enciéndela una vez con su control");
+      } else {
+        toast(e.message);
+      }
       if (e.status === 0 || e.status === 401) stopHolds();
     }
   }
@@ -253,6 +265,7 @@
     $("#certLink").href = certUrl();
     settingsMsg("");
     $("#pairBox").hidden = true;
+    $("#tvList").hidden = true;
     $("#settings").hidden = false;
   }
   function closeSettings() { $("#settings").hidden = true; }
@@ -286,16 +299,46 @@
     }
   });
 
+  // Pide el código a una TV que encontró la búsqueda.
+  async function startPairing(host, name) {
+    settingsMsg("Pidiendo el código a " + (name || "la TV") + "…");
+    await api("/api/pair/start", host ? { host } : {});
+    $("#tvList").hidden = true;
+    $("#pairBox").hidden = false;
+    $("#pairCode").value = "";
+    $("#pairCode").focus();
+    settingsMsg("Escribe el código que muestra la TV (sin tocar el control de la TV).", "ok");
+  }
+
   $("#pairStart").addEventListener("click", async () => {
     if (state.busyPair) return;
     state.busyPair = true;
-    settingsMsg("Pidiendo el código a la TV…");
+    $("#pairBox").hidden = true;
+    const list = $("#tvList");
+    list.hidden = true;
+    settingsMsg("Buscando TVs en tu red…");
     try {
-      await api("/api/pair/start", {});
-      $("#pairBox").hidden = false;
-      $("#pairCode").value = "";
-      $("#pairCode").focus();
-      settingsMsg("Escribe el código que muestra la TV (sin tocar el control de la TV).", "ok");
+      const { tvs } = await api("/api/tvs");
+      if (!tvs.length) {
+        settingsMsg("No encontré ninguna TV. ¿Está encendida y en el mismo Wi-Fi que la PC?", "bad");
+      } else if (tvs.length === 1) {
+        await startPairing(tvs[0].host, tvs[0].name);
+      } else {
+        list.replaceChildren(...tvs.map((t) => {
+          const b = document.createElement("button");
+          const name = document.createElement("span");
+          const ip = document.createElement("small");
+          name.textContent = t.name;
+          ip.textContent = t.host;
+          b.append(name, ip);
+          b.addEventListener("click", () => {
+            startPairing(t.host, t.name).catch((e) => settingsMsg(e.message, "bad"));
+          });
+          return b;
+        }));
+        list.hidden = false;
+        settingsMsg("Encontré " + tvs.length + " TVs: elige la tuya.", "ok");
+      }
     } catch (e) {
       settingsMsg(e.message, "bad");
     } finally {
@@ -321,6 +364,8 @@
   load();
   const fromLink = fromHash();
   if (!state.bridge || !state.pin || fromLink) openSettings();
+  // Desde el código QR ya vienen la dirección y el PIN: se prueba solo.
+  if (fromLink && state.pin) $("#saveSettings").click();
   startPolling();
 
   if ("serviceWorker" in navigator && location.protocol === "https:") {

@@ -1,8 +1,9 @@
 """Puente de Control TV: recibe los botones de la webapp (GitHub Pages) y se los manda a la TV por el protocolo
 oficial de control remoto de Android TV (el mismo que usa la app Google TV), con la librería androidtvremote2.
 
-    .venv\\Scripts\\python.exe server.py --tv 192.168.1.50      la primera vez (guarda la IP de la TV)
-    .venv\\Scripts\\python.exe server.py                        las siguientes
+    .venv\\Scripts\\python.exe server.py                       busca la TV en la red y abre en la PC un código
+                                                             QR para configurar el celular sin escribir nada
+    .venv\\Scripts\\python.exe server.py --tv 192.168.1.50     solo para fijar la IP de la TV a mano
 
 Escucha en https://<IP de esta PC>:8443 (la API, protegida con PIN y solo para el origen de la webapp) y en
 http://<IP de esta PC>:8080 (solo una página de ayuda y el certificado de la CA local para instalar en el celular).
@@ -15,10 +16,12 @@ import ipaddress
 import json
 import logging
 import os
+import pathlib
 import secrets
 import socket
 import ssl
 import time
+import webbrowser
 
 from aiohttp import web
 from androidtvremote2 import AndroidTVRemote, CannotConnect, ConnectionClosed, InvalidAuth
@@ -145,8 +148,10 @@ class Tv:
         self.available = False
         self.paired = None            # None: todavía no se sabe
         self.pairing_remote = None
+        self.pairing_since = 0.0
         self.lock = asyncio.Lock()
         self.down_since = None
+        self.found = []               # la última búsqueda de TVs en la red
 
     def _new_remote(self, host):
         remote = AndroidTVRemote("Control TV", CLIENT_CERT, CLIENT_KEY, host, enable_ime=True)
@@ -168,10 +173,52 @@ class Tv:
     def connected(self):
         return self.remote is not None and self.available
 
+    async def discover(self):
+        """Las TVs con el servicio de control remoto en la red de esta PC, con el nombre que cada una da (no hace
+        falta emparejar para saberlo: viene en su certificado)."""
+        found = []
+        for host in await scan(PAIR_PORT):
+            name = host
+            probe = AndroidTVRemote("Control TV", CLIENT_CERT, CLIENT_KEY, host)
+            try:
+                await probe.async_generate_cert_if_missing()
+                name, _mac = await asyncio.wait_for(probe.async_get_name_and_mac(), 6)
+            except Exception:                                   # sin nombre: se muestra la IP
+                pass
+            finally:
+                probe.disconnect()
+            found.append({"host": host, "name": name})
+        self.found = found
+        log.info("TVs en la red: %s", ", ".join(f"{t['name']} ({t['host']})" for t in found) or "ninguna")
+        return found
+
+    def use_tv(self, host):
+        """Cambia a otra TV: hay que emparejarla."""
+        if host != self.cfg.get("tv_host"):
+            self.cfg["tv_host"] = host
+            save_config(self.cfg)
+            if self.remote:
+                self.remote.disconnect()
+                self.remote = None
+            self.paired = False
+
     async def maintain(self):
-        """Conecta al arrancar y vuelve a buscar la TV si lleva más de 2 minutos sin conexión (cambió de IP, etc.)."""
+        """Conecta al arrancar y vuelve a buscar la TV si lleva más de 2 minutos sin conexión (cambió de IP, etc.).
+        Sin TV configurada, la busca en la red; si hay una sola, la toma."""
+        if not self.cfg.get("tv_host"):
+            try:
+                found = await self.discover()
+                if len(found) == 1:
+                    self.use_tv(found[0]["host"])
+            except Exception:
+                log.exception("Error al buscar la TV")
         while True:
             try:
+                # Un emparejamiento que nadie terminó (se cerró la página) no debe dejar al puente sin TV.
+                if self.pairing_remote is not None and time.monotonic() - self.pairing_since > 180:
+                    log.info("Emparejamiento sin terminar: se cancela")
+                    self.pairing_remote.disconnect()
+                    self.pairing_remote = None
                 if self.pairing_remote is None and self.paired is not False:
                     stale = self.remote is not None and not self.available and self.down_since \
                         and time.monotonic() - self.down_since > 120
@@ -215,16 +262,22 @@ class Tv:
                 return True
             return False
 
-    async def pair_start(self):
+    async def pair_start(self, chosen=None):
         async with self.lock:
+            if chosen:
+                # Solo una TV que la búsqueda encontró: la webapp no puede mandar al puente a otra dirección.
+                if chosen not in [t["host"] for t in self.found] + [self.cfg.get("tv_host")]:
+                    raise json_error(web.HTTPBadRequest, "Esa TV no apareció en la búsqueda; busca otra vez")
+                self.use_tv(chosen)
             host = self.cfg.get("tv_host")
             if not host or not await port_open(host, PAIR_PORT):
-                found = await scan(PAIR_PORT)
+                found = await self.discover()
                 if not found:
-                    raise json_error(web.HTTPServiceUnavailable, "No encuentro la TV en la red")
-                host = found[0]
-                self.cfg["tv_host"] = host
-                save_config(self.cfg)
+                    raise json_error(web.HTTPServiceUnavailable, "No encuentro ninguna TV en la red")
+                if len(found) > 1:
+                    raise json_error(web.HTTPConflict, "Hay varias TVs en la red; búscalas y elige una")
+                self.use_tv(found[0]["host"])
+                host = found[0]["host"]
             if self.remote:
                 self.remote.disconnect()
                 self.remote = None
@@ -234,6 +287,7 @@ class Tv:
             await remote.async_generate_cert_if_missing()
             await remote.async_start_pairing()
             self.pairing_remote = remote
+            self.pairing_since = time.monotonic()
             log.info("Emparejando: la TV muestra un código")
 
     async def pair_finish(self, code):
@@ -271,6 +325,7 @@ class Tv:
             "app": r.current_app if r else None,
             "volume": dict(vol) if vol else None,
             "tv": f"{info['manufacturer']} {info['model']}".strip() if info else None,
+            "has_tv": bool(self.cfg.get("tv_host")),
         }
 
 
@@ -364,8 +419,20 @@ def make_api(cfg, tv):
             raise json_error(web.HTTPServiceUnavailable, "La TV no está conectada")
         return web.json_response({"ok": True})
 
+    async def tvs(request):
+        found = await tv.discover()
+        return web.json_response({"tvs": found, "current": cfg.get("tv_host")})
+
     async def pair_start(request):
-        await tv.pair_start()
+        data = await body(request)
+        chosen = str(data.get("host", "")).strip() or None
+        if chosen:
+            try:
+                if not ipaddress.ip_address(chosen).is_private:
+                    raise ValueError
+            except ValueError:
+                raise json_error(web.HTTPBadRequest, "Dirección de TV inválida")
+        await tv.pair_start(chosen)
         return web.json_response({"ok": True})
 
     async def pair_finish(request):
@@ -385,6 +452,7 @@ def make_api(cfg, tv):
     api.router.add_post("/api/key", key)
     api.router.add_post("/api/app", app)
     api.router.add_post("/api/text", text)
+    api.router.add_get("/api/tvs", tvs)
     api.router.add_post("/api/pair/start", pair_start)
     api.router.add_post("/api/pair/finish", pair_finish)
     api.router.add_route("OPTIONS", "/{tail:.*}", preflight)
@@ -405,9 +473,40 @@ direcciones de tu casa, no para sitios de internet).</p>
 Información → <i>Ajustes de confianza de certificados</i> → activa <i>Control TV - CA local</i>.</p>
 <p><b>Android:</b> Ajustes → Seguridad → Más ajustes → Cifrado y credenciales → Instalar un certificado →
 Certificado de CA → elige el archivo descargado.</p>
-<a class="btn" href="{webapp}#bridge={bridge}">2. Abrir el control</a>
-<p>El control te pedirá el PIN que muestra el puente en la PC.</p>
+<a class="btn" id="open" href="{webapp}#bridge={bridge}">2. Abrir el control</a>
+<p id="pinNote">El control te pedirá el PIN que muestra el puente en la PC.</p>
+<p>Si ya instalaste el certificado antes, toca directo <b>Abrir el control</b>.</p>
+<script>
+// El código QR de la PC trae el PIN en el fragmento (#pin=…), que nunca sale del celular: se lo pasamos al control.
+var m = location.hash.match(/pin=(\\d{{6}})/);
+if (m) {{
+  document.getElementById("open").href += "&pin=" + m[1];
+  document.getElementById("pinNote").textContent = "El PIN ya va incluido: no tienes que escribir nada.";
+  history.replaceState(null, "", location.pathname);
+}}
+</script>
 </main></body></html>"""
+
+START_PAGE = """<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Control TV: escanea con el celular</title>
+<style>body{{font-family:system-ui,sans-serif;background:#000;color:#eee;margin:0;display:grid;place-items:center;
+min-height:100vh;text-align:center}}.qr{{background:#fff;padding:22px;border-radius:24px;display:inline-block}}
+h1{{font-weight:300;margin:0 0 6px}}p{{color:#aaa;max-width:460px;margin:10px auto;line-height:1.5}}
+code{{color:#fff}}</style></head><body><main>
+<h1>Control TV</h1><p>Escanea este código con la cámara del celular (conectado al Wi-Fi de la casa).</p>
+<div class="qr">{qr}</div>
+<p>Abre la página del certificado y del control, con la dirección y el PIN ya incluidos.<br>
+PIN: <code>{pin}</code> · Puente: <code>{bridge}</code></p>
+<p>Deja abierta la ventana negra del puente mientras uses el control.</p></main></body></html>"""
+
+
+def write_start_page(setup_url, bridge_url, pin):
+    """La página con el código QR que se abre en la PC al arrancar el puente (queda en bridge/data/)."""
+    import segno
+    qr = segno.make(setup_url, error="m").svg_inline(scale=8, dark="#000", light="#fff")
+    path = os.path.join(DATA, "inicio.html")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(START_PAGE.format(qr=qr, pin=pin, bridge=bridge_url))
+    return path
 
 
 def make_help(bridge_url):
@@ -457,7 +556,14 @@ async def main(args):
     print(f"  Webapp:       {WEBAPP}#bridge={bridge_url}")
     print(f"  PIN:          {cfg['pin']}")
     if not args.test_http_local:
-        print(f"  Certificado:  http://{ip}:{HTTP_PORT}/   (ábrelo en el celular la primera vez)")
+        setup_url = f"http://{ip}:{HTTP_PORT}/#pin={cfg['pin']}"
+        print(f"  Celular:      http://{ip}:{HTTP_PORT}/   (o escanea el código QR que se abrió en la PC)")
+        try:
+            page = write_start_page(setup_url, bridge_url, cfg["pin"])
+            if not args.no_browser:
+                webbrowser.open(pathlib.Path(page).as_uri())
+        except Exception:
+            log.exception("No se pudo crear la página con el código QR")
     print(f"  TV:           {cfg.get('tv_host') or 'se buscará en la red'}")
     print("  Ctrl+C para detener.\n", flush=True)
     try:
@@ -474,6 +580,7 @@ if __name__ == "__main__":
     parser.add_argument("--new-pin", action="store_true", help="genera un PIN nuevo")
     parser.add_argument("--allow-origin", action="append", help="otro origen permitido para la webapp (pruebas)")
     parser.add_argument("--test-http-local", action="store_true", help="solo pruebas: http en 127.0.0.1:8099")
+    parser.add_argument("--no-browser", action="store_true", help="no abrir la página del código QR al arrancar")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,

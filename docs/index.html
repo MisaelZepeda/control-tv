@@ -45,7 +45,7 @@
 
   <main class="app">
     <header class="top">
-      <button class="round danger" data-key="POWER" aria-label="Encender o apagar"><svg><use href="#i-power"/></svg></button>
+      <button class="power" data-key="POWER" id="powerBtn" aria-label="Encender o apagar la TV"><svg><use href="#i-power"/></svg><span id="powerLabel">Apagar</span></button>
       <button class="status" id="status" aria-live="polite">
         <span class="dot" id="statusDot"></span>
         <span class="status-text">
@@ -129,10 +129,12 @@
       <p class="small" id="settingsMsg"></p>
 
       <h3>Emparejar con la TV</h3>
-      <p class="muted small">Solo una vez: la TV muestra un código. No toques el control de la TV mientras lo escribes.</p>
+      <p class="muted small">Solo una vez: el puente busca la TV en tu red (no necesitas su IP), la TV muestra un
+        código y lo escribes aquí. No toques el control de la TV mientras el código está en pantalla.</p>
       <div class="actions">
-        <button id="pairStart">Mostrar código en la TV</button>
+        <button id="pairStart">Buscar TV y emparejar</button>
       </div>
+      <div class="tvlist" id="tvList" hidden></div>
       <div class="pair" id="pairBox" hidden>
         <input id="pairCode" type="text" maxlength="8" placeholder="Código de la TV" autocapitalize="characters" spellcheck="false">
         <button class="primary" id="pairFinish">Emparejar</button>

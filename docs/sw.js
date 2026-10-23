@@ -1,5 +1,5 @@
 // Guarda la página para que abra al instante y sin internet. Las llamadas al puente (otro origen) no pasan por aquí.
-const CACHE = "control-tv-v1";
+const CACHE = "control-tv-v2";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg",
   "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 

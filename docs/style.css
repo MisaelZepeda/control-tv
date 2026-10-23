@@ -63,7 +63,13 @@ button svg {
 /* encabezado */
 .top { display: flex; align-items: center; gap: 12px; }
 .round { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; flex: none; }
-.round.danger { color: #ff6b6b; }
+.power {
+  height: 52px; padding: 0 16px 0 14px; border-radius: 26px; flex: none;
+  display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 500;
+  color: #ff6b6b; background: rgba(255, 69, 58, .14); border-color: rgba(255, 69, 58, .38);
+}
+.power.off { color: #4cd964; background: rgba(52, 199, 89, .14); border-color: rgba(52, 199, 89, .4); }
+.power svg { stroke-width: 2.2; }
 .status {
   flex: 1; min-width: 0; height: 52px; border-radius: 26px;
   display: flex; align-items: center; gap: 10px; padding: 0 16px; text-align: left;
@@ -174,6 +180,13 @@ button svg {
 .actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .actions button, .pair button { height: 46px; padding: 0 18px; border-radius: 14px; }
 .primary { background: #fff; color: #000; border: none; font-weight: 600; }
+.tvlist { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.tvlist[hidden] { display: none; }
+.tvlist button {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  min-height: 52px; padding: 8px 16px; border-radius: 14px; text-align: left;
+}
+.tvlist button small { color: var(--muted); font-size: 12px; }
 .pair { display: flex; gap: 10px; margin-top: 12px; }
 .pair[hidden] { display: none; }
 .pair input { margin-top: 0; text-transform: uppercase; letter-spacing: .2em; }

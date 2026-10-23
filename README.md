@@ -27,28 +27,34 @@ hacerse pasar por ningún sitio de internet. Su llave nunca sale de la PC (`brid
 Necesitas: la TV y la PC en la misma red, Python 3.10 o más nuevo en la PC, y el servicio de control remoto de
 la TV activo (viene con Android TV; es el que usa la app Google TV).
 
-1. **Arranca el puente** (Windows, en `bridge/`):
+No hace falta saber ninguna IP: el puente busca la TV en la red y le da al celular su propia dirección con un
+código QR.
 
-   ```powershell
-   .\iniciar-puente.ps1 --tv 192.168.1.50
-   ```
-
-   La primera vez instala las librerías y muestra la **dirección de la webapp**, el **PIN** y la página del
-   certificado. Las siguientes veces basta `.\iniciar-puente.ps1`. Si la TV cambia de IP, el puente la busca solo.
+1. **Arranca el puente**: doble clic en `bridge\iniciar-puente.cmd` (deja abierta la ventana negra). La primera
+   vez instala las librerías. Busca la TV en la red y **abre en la PC una página con un código QR**.
 
 2. **Firewall de Windows**: la primera vez pregunta si Python puede usar la red. Permítelo en **redes privadas**
    y marca tu Wi-Fi de casa como red privada (Configuración → Red e Internet → Wi-Fi → tu red → Red privada).
 
-3. **Certificado en el celular** (una vez): abre `http://<IP de la PC>:8080/` en el celular y sigue los pasos.
+3. **Escanea el código QR** con la cámara del celular (en el mismo Wi-Fi). Abre la página del puente con la
+   dirección y el PIN ya incluidos.
+
+4. **Certificado en el celular** (una vez), desde esa página:
    - **iPhone:** permite la descarga → Ajustes → *Perfil descargado* → Instalar. Luego Ajustes → General →
      Información → *Ajustes de confianza de certificados* → activa **Control TV - CA local**.
    - **Android:** Ajustes → Seguridad → Cifrado y credenciales → Instalar un certificado → Certificado de CA.
 
-4. **Abre el control** con el botón de esa misma página (lleva la dirección del puente), escribe el **PIN** y
-   toca **Guardar y probar**. En Safari: Compartir → *Agregar a inicio*; en Chrome: menú → *Instalar app*.
+5. **Abre el control** con el botón de esa misma página: se configura solo. Para tenerlo como app: en Safari,
+   Compartir → *Agregar a inicio*; en Chrome, menú → *Instalar app*.
 
-5. **Empareja con la TV** (una vez): Configuración → *Mostrar código en la TV* → escribe el código.
-   **No toques el control de la TV mientras el código está en pantalla**: la TV cancela el emparejamiento.
+6. **Empareja con la TV** (una vez): Configuración → **Buscar TV y emparejar**. Si hay varias TVs, elige la tuya
+   por su nombre; la TV muestra un código y lo escribes. **No toques el control de la TV mientras el código está
+   en pantalla**: la TV cancela el emparejamiento.
+
+**Encender y apagar**: el botón rojo **Apagar** de arriba pone la TV en espera; en espera se vuelve verde y dice
+**Encender**. Para encender desde el celular, la TV tiene que seguir conectada a la red en espera (la mayoría de
+las Android TV lo hacen para Chromecast). Si la TV se apagó por completo (desconectada de la luz), enciéndela una
+vez con su control.
 
 ## Seguridad
 
@@ -72,7 +78,7 @@ Netflix, YouTube, Prime Video, Disney+, Max, Canela.TV, Claro video y Mercado Pl
 |---|---|
 | "No hay conexión con el puente" | ¿Está corriendo el puente? ¿El celular está en el mismo Wi-Fi? ¿Instalaste y confiaste el certificado? ¿El firewall permite Python? |
 | "PIN incorrecto" | Revisa el PIN que muestra el puente al arrancar. Tras 5 intentos espera un minuto. |
-| "Falta emparejar" | Configuración → *Mostrar código en la TV*. |
+| "Falta emparejar" o "Falta elegir la TV" | Configuración → *Buscar TV y emparejar*. |
 | "La TV cerró el emparejamiento" | Se tocó el control de la TV mientras mostraba el código; vuelve a intentarlo. |
 | "TV sin conexión" | La TV está apagada del todo o cambió de red; el puente la vuelve a buscar sola en un par de minutos. |
 | La PC cambió de IP | El puente renueva su certificado solo; actualiza la dirección en la Configuración de la webapp. |
