@@ -547,7 +547,7 @@ async def main(args):
         ctx.load_cert_chain(cert_path, key_path)
         bridge_url = f"https://{ip}:{HTTPS_PORT}"
         for app, port, tls in ((make_api(cfg, tv), HTTPS_PORT, ctx), (make_help(bridge_url), HTTP_PORT, None)):
-            runner = web.AppRunner(app, access_log=None)
+            runner = web.AppRunner(app, access_log=logging.getLogger("aiohttp.access") if args.verbose else None)
             await runner.setup()
             await web.TCPSite(runner, "0.0.0.0", port, ssl_context=tls).start()
             runners.append(runner)
@@ -574,7 +574,26 @@ async def main(args):
             await runner.cleanup()
 
 
+def disable_quick_edit():
+    """En la consola de Windows, un clic dentro de la ventana la pone en modo de selección de texto y congela el
+    programa hasta que se presiona una tecla: el puente dejaba de contestar y el control "tardaba y fallaba".
+    Se apaga ese modo solo para esta ventana."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)                         # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            # Sin ENABLE_QUICK_EDIT_MODE (0x40); ENABLE_EXTENDED_FLAGS (0x80) hace que el cambio se aplique.
+            kernel32.SetConsoleMode(handle, (mode.value & ~0x0040) | 0x0080)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    disable_quick_edit()
     parser = argparse.ArgumentParser(description="Puente entre la webapp Control TV y la TV.")
     parser.add_argument("--tv", help="IP de la TV (se guarda para las siguientes veces)")
     parser.add_argument("--new-pin", action="store_true", help="genera un PIN nuevo")
